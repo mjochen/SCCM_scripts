@@ -1,0 +1,1 @@
+\\CM01\SMS_PS1\Client\ccmsetup.exe SMSSITECODE=PS1 /MP:CM01

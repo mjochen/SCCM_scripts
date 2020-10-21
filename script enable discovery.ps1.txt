@@ -1,0 +1,97 @@
+﻿# door studenten
+# ongetest
+
+#laden van de modules binnen configurationmanager, we configureren op primary site 1 (PS1)
+Import-Module 'C:\Program Files (x86)\Microsoft Configuration Manager\AdminConsole\bin\ConfigurationManager'
+Set-Location PS1:
+
+#Variabelen, we creëren variabele die naar de juiste site server en locatie verwijzen.
+$CMSiteCode = 'PS1'
+$CMSiteServer = 'CM01.local.cursusdom.tm'
+$CMNameSpace = "root\SMS\site_$CMSiteCode"
+
+
+# Configure Group Discovery
+
+# We maken een nieuwe schedule aan met als interval dagen en dit om de 7 dagen, deze wordt gebruikt bij het instellen van group discovery.
+$CMGroupDiscoverySchedule = New-CMSchedule -RecurInterval Days -RecurCount 7
+
+#Configureer de basis discovery. Hierin gebruiken we het schedule dat we hierboven gedefinieerd hebben.
+
+Set-CMDiscoveryMethod -ActiveDirectoryGroupDiscovery ` -SiteCode $CMSiteCode ` -EnableDeltaDiscovery $true ` -DeltaDiscoveryIntervalMinutes 5 ` -EnableFilteringExpiredLogon $true ` -TimeSinceLastLogonDays 30 ` -EnableFilteringExpiredPassword $true ` -TimeSinceLastPasswordUpdateDays 90 ` -PollingSchedule $CMGroupDiscoverySchedule ` -Enabled $true
+
+#region AD Group Discovery
+
+#Hieronder stellen we de scopes in. Hierin maken we ook de locatie aan.
+$GroupDiscovery = Get-CimInstance -ComputerName $CMSiteServer ` -Namespace $CMNameSpace ` -ClassName SMS_SCI_Component ` -Filter 'ComponentName ="SMS_AD_SECURITY_GROUP_DISCOVERY_AGENT"'
+$ADContainerProp = $GroupDiscovery.PropLists | where {$_.PropertyListName -eq "AD Containers" }
+$ADContainerProp.Values = "Acme - Software groups",0,0,1  #Name, Type Setting (Location [0] or Group [1]),Recursive,don't know what this does
+
+We maken een nieuwe property aan waarin we aangeven waar er moet gezocht worden.
+$NewProp = New-CimInstance -ClientOnly -Namespace $CMNameSpace -ClassName SMS_EmbeddedPropertyList -Property @{PropertyListName="Search Bases:PS1";Values=[string[]]"LDAP://OU=Software groups,OU=Acme,DC=Local,DC=cursusdom,DC=tm"}
+$GroupDiscovery.PropLists += $NewProp
+
+Get-CimInstance -ComputerName $CMSiteServer ` -Namespace $CMNameSpace ` -ClassName SMS_SCI_Component ` -Filter 'ComponentName ="SMS_AD_SECURITY_GROUP_DISCOVERY_AGENT"' | Set-CimInstance -Property @{PropLists=$ADGroupDiscovery.PropLists}
+
+#region AD System Discovery
+
+#Instellen van system discovery en enablen
+$CMSystemDiscoverySchedule = New-CMSchedule -Start "1998/01/01 20:20:00" -RecurInterval Days -RecurCount 7
+Set-CMDiscoveryMethod -ActiveDirectorySystemDiscovery ` -SiteCode $CMSiteCode ` -EnableDeltaDiscovery $true ` -DeltaDiscoveryIntervalMinutes 5 ` -EnableFilteringExpiredLogon $true ` -TimeSinceLastLogonDays 30 ` -EnableFilteringExpiredPassword $true ` -TimeSinceLastPasswordUpdateDays 90 ` -PollingSchedule $CMSystemDiscoverySchedule ` -Enabled $true
+#Containers instellen
+#$Sysdiscovery = get-ciminstance -ClassName SMS_SCI_Component -filter 'componentname ="sms_ad_system_discovery_agent"'
+$ADSysDiscovery = Get-CimInstance -ComputerName $CMSiteServer ` -Namespace $CMNameSpace ` -ClassName SMS_SCI_Component ` -Filter 'ComponentName ="SMS_AD_SYSTEM_DISCOVERY_AGENT"'
+$ADContainerProp =$ADSysdiscovery.PropLists | where {$_.PropertyListName -eq "AD Containers" }
+$ADContainerProp.Values = "LDAP://OU=Domain Controllers,DC=local,DC=cursusdom,DC=tm",1,1,"LDAP://OU=Computers,OU=Acme,DC=local,DC=cursusdom,DC=tm",1,1 # Ldap path of the Container, Recursive search, Discover objects within groups
+#$ADContainerProp.Values = "Acme - Software groups",0,0,1  #Name, Type Setting (Location [0] or Group [1]),Recursive,don't know what this does
+
+Get-CimInstance -ComputerName $CMSiteServer ` -Namespace $CMNameSpace ` -ClassName SMS_SCI_Component ` -Filter 'ComponentName ="SMS_AD_SYSTEM_DISCOVERY_AGENT"' | Set-CimInstance -Property @{PropLists=$ADSysDiscovery.PropLists}
+
+#endregion AD System Discovery
+
+#region AD User Discovery
+
+#Instellen van AD User Discovery
+
+
+$ADUserDiscovery = Get-CimInstance -ComputerName $CMSiteServer ` -Namespace $CMNameSpace ` -ClassName SMS_SCI_Component ` -Filter 'ComponentName ="SMS_AD_USER_DISCOVERY_AGENT"'
+
+$ADContainerProp =$ADUserDiscovery.PropLists | where {$_.PropertyListName -eq "AD Containers" }
+
+Set-CMDiscoveryMethod -ActiveDirectoryUserDiscovery ` -SiteCode $CMSiteCode ` -EnableDeltaDiscovery $true ` -DeltaDiscoveryIntervalMinutes 5 ` -PollingSchedule $CMUserDiscoverySchedule ` -enabled $true
+
+Instellen van schema voor AD User Discovery
+$CMUserDiscoverySchedule = New-CMSchedule -Start "1970/02/01 00:00:00" -RecurInterval Days -RecurCount 7
+$ADContainerProp.Values = "LDAP://OU=Users,OU=Acme,DC=local,DC=cursusdom,DC=tm",0,0,"LDAP://OU=Admins,OU=Acme,DC=local,DC=cursusdom,DC=tm",0,0
+
+Get-CimInstance -ComputerName $CMSiteServer ` -Namespace $CMNameSpace ` -ClassName SMS_SCI_Component ` -Filter 'ComponentName ="SMS_AD_USER_DISCOVERY_AGENT"' | Set-CimInstance -Property @{PropLists=$ADUserDiscovery.PropLists} 
+
+#endregion AD User Discovery
+
+
+#Instellen van AD Forest Discovery
+
+#Aanmaken van een schedule voor AD Forest Discovery
+$ADForestSchedule = New-CMSchedule -RecurInterval Days -RecurCount 7
+
+#Enablen AD Forest Discovery
+Set-CMDiscoveryMethod -ActiveDirectoryForestDiscovery -SiteCode $CMSiteCode -Enabled:$true -PollingSchedule $ADForestSchedule -EnableActiveDirectorySiteBoundaryCreation:$true -EnableSubnetBoundaryCreation:$true
+
+#To run AD Forest Disovery now
+#Invoke-CMForestDiscovery -SiteCode $CMSiteCode -Verbose
+
+#Instellen van Heartbeat en enablen Heartbeat
+
+#$Schedule = New-CMSchedule -Start "1998/01/01 00:00:00" -DurationInterval Weeks -DurationCount 4
+$Schedule = New-CMSchedule -Start "1998/01/01 00:00:00" -RecurInterval days -RecurCount 31
+Set-CMDiscoveryMethod -Heartbeat -SiteCode $CMSiteCode -Enabled $True -PollingSchedule $Schedule 
+
+#endregion HeartBeat Discovery
+
+
+
+#region Network Discovery
+#Instellen Network Discovery en enablen
+Set-CMDiscoveryMethod -NetworkDiscovery -SiteCode $CMSiteCode -NetworkDiscoveryType Topology -Enabled $true 
+
+#endregion Network Discovery1

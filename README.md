@@ -1,2 +1,2 @@
-# SCCM_scripts
-Scripts for the SCCM-course
+# SCCM-scripts
+Scripts for the SCCM-course.
